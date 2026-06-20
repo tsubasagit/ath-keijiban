@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ログイン / Login</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --primary: #1f5b8c;
+    --primary-dark: #174a73;
+    --border: #e2e6ec;
+    --text: #1f2630;
+    --muted: #7a8595;
+    --ok: #1e7e4f;
+    --err: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .wrap { width: 100%; max-width: 420px; padding: 48px 16px 80px; }
+  h1 { font-size: 22px; margin: 0 0 20px; color: var(--primary); letter-spacing: .02em; text-align: center; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 22px;
+    box-shadow: 0 1px 2px rgba(20,40,70,.04);
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+  .field { margin-bottom: 14px; }
+  input[type=email], input[type=password] {
+    width: 100%; font: inherit; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text);
+  }
+  input:focus { outline: 2px solid rgba(31,91,140,.25); border-color: var(--primary); }
+  .btn-row { display: flex; gap: 10px; margin-top: 6px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border-radius: 10px; padding: 10px 16px; flex: 1;
+    transition: background .15s, opacity .15s, border-color .15s;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .primary { background: var(--primary); color: #fff; border: none; }
+  .primary:hover:not(:disabled) { background: var(--primary-dark); }
+  .ghost { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+  .ghost:hover:not(:disabled) { background: #eef4f9; }
+  .logout { background: #fff; color: var(--err); border: 1px solid var(--err); }
+  .logout:hover:not(:disabled) { background: #fdecec; }
+
+  .msg { font-size: 13px; margin-top: 14px; min-height: 1.2em; text-align: center; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--err); }
+
+  /* ログイン状態の表示 */
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; padding: 10px 14px; border-radius: 10px;
+    margin-bottom: 18px; border: 1px solid var(--border); background: #fff;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status.in .dot { background: var(--ok); }
+  .status .who { font-weight: 700; }
+
+  .signed-in-box { text-align: center; }
+  .signed-in-box .email { font-weight: 700; font-size: 16px; margin: 4px 0 18px; word-break: break-all; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔐 ログイン</h1>
+
+  <!-- ログイン状態の表示 -->
+  <div class="status" id="statusBar">
+    <span class="dot"></span>
+    <span id="statusText">確認中…</span>
+  </div>
+
+  <div class="card">
+    <!-- 未ログイン: ログイン / 新規登録フォーム -->
+    <div id="formView">
+      <div class="field">
+        <label for="email">メールアドレス</label>
+        <input type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="password">パスワード</label>
+        <input type="password" id="password" placeholder="6文字以上" autocomplete="current-password" />
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="loginBtn">ログイン</button>
+        <button class="ghost" id="signupBtn">新規登録</button>
+      </div>
+    </div>
+
+    <!-- ログイン済み: ログアウト -->
+    <div id="signedInView" class="signed-in-box hidden">
+      <label>ログイン中のアカウント</label>
+      <div class="email" id="currentEmail">—</div>
+      <button class="logout" id="logoutBtn">ログアウト</button>
+    </div>
+
+    <div class="msg" id="msg"></div>
+  </div>
+</div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// ▼▼▼ ここに自分の値を貼り付けてください ▼▼▼
+const SUPABASE_URL = "YOUR_SUPABASE_URL";              // 例: https://xxxxxxxx.supabase.co
+const SUPABASE_KEY = "YOUR_SUPABASE_PUBLISHABLE_KEY";  // 公開可能キー (sb_publishable_...)
+// ▲▲▲ ここまで ▲▲▲
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (id) => document.getElementById(id);
+const emailEl = $("email"), passEl = $("password"), msgEl = $("msg");
+const loginBtn = $("loginBtn"), signupBtn = $("signupBtn"), logoutBtn = $("logoutBtn");
+const formView = $("formView"), signedInView = $("signedInView");
+const statusBar = $("statusBar"), statusText = $("statusText"), currentEmail = $("currentEmail");
+
+function setMsg(text, kind) {
+  msgEl.textContent = text || "";
+  msgEl.className = "msg" + (kind ? " " + kind : "");
+}
+
+function setBusy(busy) {
+  [loginBtn, signupBtn, logoutBtn].forEach((b) => (b.disabled = busy));
+}
+
+// ログイン状態に応じて表示を切り替える
+function renderSession(session) {
+  const user = session?.user || null;
+  if (user) {
+    statusBar.classList.add("in");
+    statusText.innerHTML = `<span class="who">${user.email}</span> でログイン中`;
+    currentEmail.textContent = user.email;
+    formView.classList.add("hidden");
+    signedInView.classList.remove("hidden");
+  } else {
+    statusBar.classList.remove("in");
+    statusText.textContent = "未ログイン";
+    formView.classList.remove("hidden");
+    signedInView.classList.add("hidden");
+  }
+}
+
+function readForm() {
+  const email = emailEl.value.trim();
+  const password = passEl.value;
+  if (!email || !password) {
+    setMsg("メールアドレスとパスワードを入力してください。", "err");
+    return null;
+  }
+  return { email, password };
+}
+
+// 新規登録
+async function signUp() {
+  const f = readForm();
+  if (!f) return;
+  setBusy(true); setMsg("登録中…");
+  const { data, error } = await supabase.auth.signUp(f);
+  setBusy(false);
+  if (error) { setMsg("登録エラー: " + error.message, "err"); return; }
+  // メール確認が有効な場合は session が null で返る
+  if (!data.session) {
+    setMsg("確認メールを送信しました。メール内のリンクを開いて登録を完了してください。", "ok");
+  } else {
+    setMsg("登録が完了しました。", "ok");
+  }
+}
+
+// ログイン
+async function login() {
+  const f = readForm();
+  if (!f) return;
+  setBusy(true); setMsg("ログイン中…");
+  const { error } = await supabase.auth.signInWithPassword(f);
+  setBusy(false);
+  if (error) { setMsg("ログインエラー: " + error.message, "err"); return; }
+  setMsg("ログインしました。", "ok");
+}
+
+// ログアウト
+async function logout() {
+  setBusy(true); setMsg("ログアウト中…");
+  const { error } = await supabase.auth.signOut();
+  setBusy(false);
+  if (error) { setMsg("ログアウトエラー: " + error.message, "err"); return; }
+  passEl.value = "";
+  setMsg("ログアウトしました。", "ok");
+}
+
+loginBtn.addEventListener("click", login);
+signupBtn.addEventListener("click", signUp);
+logoutBtn.addEventListener("click", logout);
+passEl.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+
+// 起動時に現在のセッションを反映 + 以後の変化を監視
+const { data: { session } } = await supabase.auth.getSession();
+renderSession(session);
+supabase.auth.onAuthStateChange((_event, session) => renderSession(session));
+</script>
+</body>
+</html>
