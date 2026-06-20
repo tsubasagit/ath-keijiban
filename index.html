@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>掲示板 / Keijiban</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --primary: #1f5b8c;
+    --primary-dark: #174a73;
+    --border: #e2e6ec;
+    --text: #1f2630;
+    --muted: #7a8595;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 80px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; color: var(--primary); letter-spacing: .02em; }
+  .room-bar { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .room-bar select {
+    font-size: 14px; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--card); color: var(--text);
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px; margin-bottom: 22px;
+    box-shadow: 0 1px 2px rgba(20,40,70,.04);
+  }
+  .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  input[type=text], textarea {
+    width: 100%; font: inherit; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text);
+    resize: vertical;
+  }
+  input[type=text]:focus, textarea:focus { outline: 2px solid rgba(31,91,140,.25); border-color: var(--primary); }
+  .name-field { max-width: 220px; }
+  textarea { min-height: 84px; }
+  .actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 12px; }
+  .hint { font-size: 12px; color: var(--muted); }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--primary); color: #fff; border: none;
+    padding: 10px 20px; border-radius: 10px; transition: background .15s, opacity .15s;
+  }
+  button:hover { background: #174a73; }
+  button:disabled { opacity: .55; cursor: default; }
+  .list { display: flex; flex-direction: column; gap: 12px; }
+  .post {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+  }
+  .post .meta { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .post .who { font-weight: 700; font-size: 14px; }
+  .post .when { font-size: 12px; color: var(--muted); }
+  .post .body { white-space: pre-wrap; word-break: break-word; font-size: 15px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+  .status { font-size: 12px; color: var(--muted); text-align: center; margin-top: 16px; }
+  .error { color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📋 掲示板</h1>
+    <div class="room-bar">
+      <label for="room">ルーム</label>
+      <select id="room">
+        <option value="general">general（雑談）</option>
+        <option value="info">info（お知らせ）</option>
+        <option value="dev">dev（開発）</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="form-row">
+      <input type="text" id="name" class="name-field" placeholder="お名前（任意）" maxlength="40" />
+    </div>
+    <textarea id="body" placeholder="メッセージを入力…" maxlength="2000"></textarea>
+    <div class="actions">
+      <span class="hint">Ctrl + Enter で投稿</span>
+      <button id="postBtn">投稿する</button>
+    </div>
+  </div>
+
+  <div class="list" id="list"></div>
+  <div class="status" id="status">読み込み中…</div>
+</div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = "https://kcfnhhcoasgculonbbtx.supabase.co";
+const SUPABASE_KEY = "sb_publishable_JU-uguITndR8dzhEsXFCvw_nmWGu-wq";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (id) => document.getElementById(id);
+const listEl = $("list"), statusEl = $("status");
+const roomEl = $("room"), nameEl = $("name"), bodyEl = $("body"), btn = $("postBtn");
+
+let channel = null;
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function formatTime(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function render(rows) {
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="empty">まだ投稿がありません。最初の一言をどうぞ。</div>`;
+    return;
+  }
+  listEl.innerHTML = rows.map((r) => `
+    <div class="post">
+      <div class="meta">
+        <span class="who">${escapeHtml(r.name || "名無し")}</span>
+        <span class="when">${formatTime(r.created_at)}</span>
+      </div>
+      <div class="body">${escapeHtml(r.body)}</div>
+    </div>`).join("");
+}
+
+async function load() {
+  const room = roomEl.value;
+  statusEl.textContent = "読み込み中…";
+  statusEl.classList.remove("error");
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id,room,name,body,created_at")
+    .eq("room", room)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) {
+    statusEl.textContent = "読み込みエラー: " + error.message;
+    statusEl.classList.add("error");
+    return;
+  }
+  render(data);
+  statusEl.textContent = `${data.length} 件の投稿 ・ ルーム「${room}」`;
+}
+
+function subscribe() {
+  if (channel) supabase.removeChannel(channel);
+  const room = roomEl.value;
+  channel = supabase
+    .channel("messages-" + room)
+    .on("postgres_changes",
+      { event: "INSERT", schema: "public", table: "messages", filter: `room=eq.${room}` },
+      () => load())
+    .subscribe();
+}
+
+async function post() {
+  const room = roomEl.value;
+  const name = nameEl.value.trim();
+  const body = bodyEl.value.trim();
+  if (!body) { bodyEl.focus(); return; }
+  btn.disabled = true;
+  const { error } = await supabase
+    .from("messages")
+    .insert({ room, name: name || "名無し", body });
+  btn.disabled = false;
+  if (error) {
+    statusEl.textContent = "投稿エラー: " + error.message;
+    statusEl.classList.add("error");
+    return;
+  }
+  bodyEl.value = "";
+  await load();
+}
+
+btn.addEventListener("click", post);
+bodyEl.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") post();
+});
+roomEl.addEventListener("change", () => { load(); subscribe(); });
+
+load();
+subscribe();
+</script>
+</body>
+</html>
